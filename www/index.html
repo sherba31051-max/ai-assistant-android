@@ -35,6 +35,7 @@
   }
   header .title { font-size: 17px; font-weight: 600; }
   header .sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+  header .actions { display: flex; gap: 4px; }
   header button {
     background: none; border: none; color: var(--text-dim);
     font-size: 13px; padding: 6px 10px; border-radius: 8px;
@@ -71,6 +72,17 @@
     color: var(--danger);
     font-size: 13px;
     text-align: center;
+    max-width: 100%;
+  }
+  .msg.error .retry-btn {
+    display: inline-block;
+    margin-top: 6px;
+    background: var(--bubble-ai);
+    color: var(--text);
+    border: 1px solid #2a2d34;
+    border-radius: 8px;
+    padding: 5px 12px;
+    font-size: 12px;
   }
   .msg.typing {
     align-self: flex-start;
@@ -116,6 +128,75 @@
   }
   #sendBtn:disabled { opacity: 0.4; }
   #sendBtn svg { width: 20px; height: 20px; }
+
+  /* Lessons screen */
+  #lessonsScreen {
+    position: fixed; inset: 0;
+    background: var(--bg);
+    display: none;
+    flex-direction: column;
+    z-index: 20;
+  }
+  #lessonsScreen.open { display: flex; }
+  #lessonsHeader {
+    padding: env(safe-area-inset-top, 12px) 16px 12px 16px;
+    background: var(--bg-alt);
+    border-bottom: 1px solid #22252b;
+    display: flex; align-items: center; gap: 10px;
+  }
+  #lessonsHeader .title { font-size: 17px; font-weight: 600; flex: 1; }
+  #lessonsHeader button {
+    background: none; border: none; color: var(--accent);
+    font-size: 14px; padding: 6px 8px;
+  }
+  #lessonsBody { flex: 1; overflow-y: auto; padding: 12px 16px 24px; }
+  .lang-card {
+    background: var(--bg-alt);
+    border: 1px solid #22252b;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+  }
+  .lang-card .lang-name { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+  .lang-card .lang-count { font-size: 12px; color: var(--text-dim); margin-bottom: 10px; }
+  .lesson-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 0;
+    border-top: 1px solid #22252b;
+    font-size: 14px;
+  }
+  .lesson-row:first-of-type { border-top: none; }
+  .lesson-row .arrow { color: var(--text-dim); }
+  #lessonDetail { display: none; }
+  #lessonDetail.open { display: block; }
+  #lessonDetail h3 { font-size: 18px; margin: 0 0 10px; }
+  #lessonDetail p { font-size: 14px; line-height: 1.5; color: #cfd2d8; }
+  #lessonDetail pre {
+    background: #1a1c21;
+    border: 1px solid #2a2d34;
+    border-radius: 10px;
+    padding: 12px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #b7e07a;
+  }
+  .quiz-box {
+    margin-top: 16px;
+    background: var(--bg-alt);
+    border: 1px solid #22252b;
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .quiz-box .quiz-q { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+  .quiz-box .quiz-a { font-size: 14px; color: var(--text-dim); display: none; margin-top: 8px; }
+  .quiz-box .quiz-a.shown { display: block; }
+  .quiz-box button {
+    background: var(--accent); color: white; border: none;
+    border-radius: 8px; padding: 6px 12px; font-size: 13px;
+  }
+  #langList.open, #lessonList.open { display: block; }
+  #langList, #lessonList { display: none; }
 </style>
 </head>
 <body>
@@ -125,7 +206,10 @@
       <div class="title">AI Assistant</div>
       <div class="sub" id="statusLine">автономный режим · память на устройстве</div>
     </div>
-    <button id="clearBtn">Очистить</button>
+    <div class="actions">
+      <button id="lessonsBtn">Уроки</button>
+      <button id="clearBtn">Очистить</button>
+    </div>
   </header>
   <div id="messages"></div>
   <div id="inputbar">
@@ -136,21 +220,42 @@
   </div>
 </div>
 
+<div id="lessonsScreen">
+  <div id="lessonsHeader">
+    <button id="lessonsBackBtn">‹ Назад</button>
+    <div class="title" id="lessonsTitle">Обучение языкам программирования</div>
+  </div>
+  <div id="lessonsBody">
+    <div id="langList" class="open"></div>
+    <div id="lessonList"></div>
+    <div id="lessonDetail"></div>
+  </div>
+</div>
+
+<script src="lessons.js"></script>
 <script>
 (function () {
   "use strict";
 
   var STORAGE_KEY = "ai_assistant_local_memory_v1";
+  var PROFILE_KEY = "ai_assistant_profile_v1";
   var API_ENDPOINT = "https://text.pollinations.ai/";
+  var CONTEXT_WINDOW = 3; // keep prompt short so URL stays well under length/budget limits
+  var MAX_ATTEMPTS = 3;
+  var ATTEMPT_TIMEOUT_MS = 12000;
+  var RETRY_DELAY_MS = 800;
 
   var messagesEl = document.getElementById("messages");
   var inputEl = document.getElementById("textInput");
   var sendBtn = document.getElementById("sendBtn");
   var clearBtn = document.getElementById("clearBtn");
   var statusLine = document.getElementById("statusLine");
+  var lessonsBtn = document.getElementById("lessonsBtn");
 
   /** @type {{role: "user"|"assistant", content: string}[]} */
   var history = [];
+  /** @type {string[]} facts the user has stated about themselves */
+  var profile = [];
 
   function loadHistory() {
     try {
@@ -171,12 +276,51 @@
     }
   }
 
+  function loadProfile() {
+    try {
+      var raw = localStorage.getItem(PROFILE_KEY);
+      if (raw) profile = JSON.parse(raw);
+    } catch (e) {
+      profile = [];
+    }
+  }
+
+  function saveProfile() {
+    try {
+      localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+    } catch (e) { /* ignore */ }
+  }
+
+  // Very simple heuristic long-term memory: look for a few common
+  // self-descriptive Russian phrases and remember them as short facts.
+  // No AI/model call involved — this must be 100% reliable and offline.
+  function extractFacts(text) {
+    var patterns = [
+      { re: /меня зовут ([^.,!\n]{2,40})/i, tpl: function (m) { return "Имя пользователя: " + m[1].trim() + "."; } },
+      { re: /я работаю ([^.,!\n]{2,60})/i, tpl: function (m) { return "Пользователь работает: " + m[1].trim() + "."; } },
+      { re: /я живу в ([^.,!\n]{2,40})/i, tpl: function (m) { return "Пользователь живёт в: " + m[1].trim() + "."; } },
+      { re: /мне (\d{1,3}) лет/i, tpl: function (m) { return "Возраст пользователя: " + m[1] + " лет."; } }
+    ];
+    var found = [];
+    patterns.forEach(function (p) {
+      var m = text.match(p.re);
+      if (m) found.push(p.tpl(m));
+    });
+    if (found.length) {
+      found.forEach(function (fact) {
+        if (profile.indexOf(fact) === -1) profile.push(fact);
+      });
+      if (profile.length > 20) profile = profile.slice(-20);
+      saveProfile();
+    }
+  }
+
   function renderAll() {
     messagesEl.innerHTML = "";
     if (history.length === 0) {
       var hint = document.createElement("div");
       hint.className = "empty-hint";
-      hint.textContent = "Это ваш личный ИИ-ассистент. Он работает прямо на телефоне и запоминает переписку локально, без привязки к какому-либо аккаунту или серверу-посреднику. Напишите что-нибудь, чтобы начать.";
+      hint.textContent = "Это ваш личный ИИ-ассистент. Он работает прямо на устройстве и без учётной записи, без привязки к какому-либо аккаунту. Напишите что-нибудь, чтобы начать.";
       messagesEl.appendChild(hint);
       return;
     }
@@ -205,12 +349,19 @@
     inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + "px";
   }
 
-  function buildPrompt(userText) {
-    // Keep a short rolling window of context so replies stay coherent
-    // without sending huge payloads to the public inference endpoint.
-    var recent = history.slice(-10);
-    var lines = recent.map(function (m) {
-      return (m.role === "user" ? "Пользователь: " : "Ассистент: ") + m.content;
+  function buildPrompt(userText, webContext) {
+    // Keep a SHORT rolling window of context so the encoded URL stays well
+    // under the length that causes 402/timeout issues on the free endpoint.
+    var recent = history.slice(-CONTEXT_WINDOW);
+    var lines = [];
+    if (profile.length) {
+      lines.push("Что ты знаешь о пользователе: " + profile.join(" "));
+    }
+    if (webContext) {
+      lines.push("Контекст из интернета: " + webContext);
+    }
+    recent.forEach(function (m) {
+      lines.push((m.role === "user" ? "Пользователь: " : "Ассистент: ") + m.content);
     });
     lines.push("Пользователь: " + userText);
     lines.push("Ассистент:");
@@ -223,9 +374,77 @@
     statusLine.textContent = busy ? "печатает..." : "автономный режим · память на устройстве";
   }
 
+  function delay(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
+  // Best-effort web search enrichment. Only fires for messages that look
+  // like factual lookups, has a short timeout, and NEVER blocks/breaks the
+  // main chat flow if it fails — errors are swallowed silently.
+  function looksFactual(text) {
+    return /(что такое|кто так|кто это|когда|где находится|сколько|почему|расскажи о|факты о)/i.test(text);
+  }
+
+  function extractSearchTerm(text) {
+    var m = text.match(/(?:что такое|кто такой|кто такая|расскажи о|факты о)\s+(.+)/i);
+    var term = m ? m[1] : text;
+    return term.replace(/[?!.]+$/, "").trim().slice(0, 80);
+  }
+
+  function fetchWebContext(userText) {
+    if (!looksFactual(userText)) return Promise.resolve(null);
+    var term = extractSearchTerm(userText);
+    if (!term) return Promise.resolve(null);
+
+    var controller = new AbortController();
+    var t = setTimeout(function () { controller.abort(); }, 5000);
+    var url = "https://ru.wikipedia.org/api/rest_v1/page/summary/" + encodeURIComponent(term);
+
+    return fetch(url, { method: "GET", signal: controller.signal })
+      .then(function (res) {
+        clearTimeout(t);
+        if (!res.ok) return null;
+        return res.json();
+      })
+      .then(function (data) {
+        if (!data || !data.extract) return null;
+        return data.extract.slice(0, 500);
+      })
+      .catch(function () {
+        return null; // best-effort only — silently ignore any failure
+      });
+  }
+
+  // Single network attempt with its own short timeout.
+  function attemptFetch(url) {
+    var controller = new AbortController();
+    var timeout = setTimeout(function () { controller.abort(); }, ATTEMPT_TIMEOUT_MS);
+    return fetch(url, { method: "GET", signal: controller.signal })
+      .then(function (res) {
+        clearTimeout(timeout);
+        if (!res.ok) throw new Error("Сервер ИИ вернул ошибку (" + res.status + ")");
+        return res.text();
+      })
+      .finally(function () { clearTimeout(timeout); });
+  }
+
+  // Retries a few times with a short delay — the free inference endpoint
+  // frequently hangs/cold-starts on the first attempt but succeeds shortly
+  // after, so retrying materially improves reliability without a backend.
+  function fetchWithRetry(url, attemptsLeft) {
+    return attemptFetch(url).catch(function (err) {
+      if (attemptsLeft <= 1) throw err;
+      return delay(RETRY_DELAY_MS).then(function () {
+        return fetchWithRetry(url, attemptsLeft - 1);
+      });
+    });
+  }
+
   function sendMessage() {
     var text = inputEl.value.trim();
     if (!text) return;
+
+    extractFacts(text);
 
     history.push({ role: "user", content: text });
     saveHistory();
@@ -238,17 +457,11 @@
     scrollToBottom();
     setBusy(true);
 
-    var prompt = buildPrompt(text);
-    var url = API_ENDPOINT + encodeURIComponent(prompt) + "?model=openai";
-
-    var controller = new AbortController();
-    var timeout = setTimeout(function () { controller.abort(); }, 30000);
-
-    fetch(url, { method: "GET", signal: controller.signal })
-      .then(function (res) {
-        clearTimeout(timeout);
-        if (!res.ok) throw new Error("Сервис ИИ вернул ошибку (" + res.status + ")");
-        return res.text();
+    fetchWebContext(text)
+      .then(function (webContext) {
+        var prompt = buildPrompt(text, webContext);
+        var url = API_ENDPOINT + encodeURIComponent(prompt) + "?model=openai";
+        return fetchWithRetry(url, MAX_ATTEMPTS);
       })
       .then(function (reply) {
         typingBubble.remove();
@@ -260,9 +473,19 @@
       .catch(function (err) {
         typingBubble.remove();
         var msg = err && err.name === "AbortError"
-          ? "Не удалось получить ответ: истекло время ожидания. Проверьте подключение к интернету."
-          : "Не удалось получить ответ: " + (err && err.message ? err.message : "нет соединения");
-        appendBubble("error", msg);
+          ? "Не удалось получить ответ от сервера: сервер слишком долго не отвечал даже после нескольких попыток."
+          : "Не удалось получить ответ: " + (err && err.message ? err.message : "неизвестная ошибка");
+        var bubble = appendBubble("error", msg);
+        var retryBtn = document.createElement("button");
+        retryBtn.className = "retry-btn";
+        retryBtn.textContent = "Повторить";
+        retryBtn.addEventListener("click", function () {
+          bubble.remove();
+          inputEl.value = text;
+          sendMessage();
+        });
+        bubble.appendChild(document.createElement("br"));
+        bubble.appendChild(retryBtn);
         scrollToBottom();
       })
       .finally(function () {
@@ -288,7 +511,118 @@
   });
 
   loadHistory();
+  loadProfile();
   renderAll();
+
+  // ---------------------------------------------------------------------
+  // Programming lessons screen — fully static/offline content from
+  // lessons.js. No network calls involved here.
+  // ---------------------------------------------------------------------
+  var lessonsScreen = document.getElementById("lessonsScreen");
+  var lessonsBackBtn = document.getElementById("lessonsBackBtn");
+  var lessonsTitle = document.getElementById("lessonsTitle");
+  var langListEl = document.getElementById("langList");
+  var lessonListEl = document.getElementById("lessonList");
+  var lessonDetailEl = document.getElementById("lessonDetail");
+  var LESSONS = (window.AI_ASSISTANT_LESSONS || {});
+
+  var lessonsView = "langs"; // "langs" | "lessons" | "detail"
+  var currentLang = null;
+  var currentLessonIdx = null;
+
+  function renderLangList() {
+    langListEl.innerHTML = "";
+    Object.keys(LESSONS).forEach(function (lang) {
+      var card = document.createElement("div");
+      card.className = "lang-card";
+      card.innerHTML =
+        '<div class="lang-name">' + lang + '</div>' +
+        '<div class="lang-count">' + LESSONS[lang].length + ' урок(ов)</div>';
+      card.addEventListener("click", function () {
+        currentLang = lang;
+        lessonsView = "lessons";
+        renderLessonsView();
+      });
+      langListEl.appendChild(card);
+    });
+  }
+
+  function renderLessonList() {
+    lessonListEl.innerHTML = "";
+    var lessons = LESSONS[currentLang] || [];
+    lessons.forEach(function (lesson, idx) {
+      var row = document.createElement("div");
+      row.className = "lang-card";
+      row.innerHTML =
+        '<div class="lesson-row"><span>' + (idx + 1) + '. ' + lesson.title + '</span><span class="arrow">›</span></div>';
+      row.addEventListener("click", function () {
+        currentLessonIdx = idx;
+        lessonsView = "detail";
+        renderLessonsView();
+      });
+      lessonListEl.appendChild(row);
+    });
+  }
+
+  function renderLessonDetail() {
+    var lesson = (LESSONS[currentLang] || [])[currentLessonIdx];
+    if (!lesson) { lessonDetailEl.innerHTML = ""; return; }
+    lessonDetailEl.innerHTML =
+      '<h3>' + lesson.title + '</h3>' +
+      '<p>' + lesson.explanation + '</p>' +
+      '<pre></pre>' +
+      '<div class="quiz-box">' +
+      '  <div class="quiz-q">Вопрос: ' + lesson.quiz.q + '</div>' +
+      '  <button id="showAnswerBtn">Показать ответ</button>' +
+      '  <div class="quiz-a" id="quizAnswer">' + lesson.quiz.a + '</div>' +
+      '</div>';
+    lessonDetailEl.querySelector("pre").textContent = lesson.code;
+    var showBtn = document.getElementById("showAnswerBtn");
+    var answerEl = document.getElementById("quizAnswer");
+    showBtn.addEventListener("click", function () {
+      answerEl.classList.toggle("shown");
+    });
+  }
+
+  function renderLessonsView() {
+    langListEl.classList.remove("open");
+    lessonListEl.classList.remove("open");
+    lessonDetailEl.classList.remove("open");
+    if (lessonsView === "langs") {
+      lessonsTitle.textContent = "Обучение языкам программирования";
+      langListEl.classList.add("open");
+      renderLangList();
+    } else if (lessonsView === "lessons") {
+      lessonsTitle.textContent = currentLang;
+      lessonListEl.classList.add("open");
+      renderLessonList();
+    } else {
+      lessonsTitle.textContent = currentLang;
+      lessonDetailEl.classList.add("open");
+      renderLessonDetail();
+    }
+  }
+
+  lessonsBtn.addEventListener("click", function () {
+    lessonsView = "langs";
+    currentLang = null;
+    currentLessonIdx = null;
+    renderLessonsView();
+    lessonsScreen.classList.add("open");
+  });
+
+  lessonsBackBtn.addEventListener("click", function () {
+    if (lessonsView === "detail") {
+      lessonsView = "lessons";
+      renderLessonsView();
+    } else if (lessonsView === "lessons") {
+      lessonsView = "langs";
+      currentLang = null;
+      renderLessonsView();
+    } else {
+      lessonsScreen.classList.remove("open");
+    }
+  });
 })();
 </script>
 </body>
