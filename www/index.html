@@ -241,9 +241,13 @@
   var PROFILE_KEY = "ai_assistant_profile_v1";
   var API_ENDPOINT = "https://text.pollinations.ai/";
   var CONTEXT_WINDOW = 3; // keep prompt short so URL stays well under length/budget limits
-  var MAX_ATTEMPTS = 3;
-  var ATTEMPT_TIMEOUT_MS = 12000;
-  var RETRY_DELAY_MS = 800;
+  // Rotate through several free models on the same endpoint — if one is
+  // rate-limited (429) the others often have separate quotas/capacity.
+  var MODELS = ["openai", "mistral", "llama", "openai-large"];
+  var MAX_ATTEMPTS = 5;
+  var ATTEMPT_TIMEOUT_MS = 15000;
+  var RETRY_DELAY_MS = 1200;
+  var RATE_LIMIT_EXTRA_DELAY_MS = 4000; // extra backoff specifically for 429s
 
   var messagesEl = document.getElementById("messages");
   var inputEl = document.getElementById("textInput");
@@ -415,27 +419,41 @@
       });
   }
 
-  // Single network attempt with its own short timeout.
+  // Single network attempt with its own short timeout. Tags rate-limit
+  // errors (429) distinctly so the retry loop can back off longer and
+  // switch models instead of hammering the same overloaded one.
   function attemptFetch(url) {
     var controller = new AbortController();
     var timeout = setTimeout(function () { controller.abort(); }, ATTEMPT_TIMEOUT_MS);
     return fetch(url, { method: "GET", signal: controller.signal })
       .then(function (res) {
         clearTimeout(timeout);
-        if (!res.ok) throw new Error("Сервер ИИ вернул ошибку (" + res.status + ")");
+        if (!res.ok) {
+          var err = new Error("Сервер ИИ вернул ошибку (" + res.status + ")");
+          err.status = res.status;
+          throw err;
+        }
         return res.text();
       })
       .finally(function () { clearTimeout(timeout); });
   }
 
-  // Retries a few times with a short delay — the free inference endpoint
-  // frequently hangs/cold-starts on the first attempt but succeeds shortly
-  // after, so retrying materially improves reliability without a backend.
-  function fetchWithRetry(url, attemptsLeft) {
+  // Retries across multiple free models with backoff. The free inference
+  // endpoint frequently hangs/cold-starts or rate-limits (429) a given
+  // model, but rotating to another model + waiting longer materially
+  // improves reliability without needing any backend/API key.
+  function fetchWithRetry(promptText, attemptsLeft, modelIdx) {
+    modelIdx = modelIdx || 0;
+    var model = MODELS[modelIdx % MODELS.length];
+    var url = API_ENDPOINT + encodeURIComponent(promptText) + "?model=" + model;
     return attemptFetch(url).catch(function (err) {
       if (attemptsLeft <= 1) throw err;
-      return delay(RETRY_DELAY_MS).then(function () {
-        return fetchWithRetry(url, attemptsLeft - 1);
+      var isRateLimited = err && err.status === 429;
+      var waitMs = RETRY_DELAY_MS + (isRateLimited ? RATE_LIMIT_EXTRA_DELAY_MS : 0);
+      // On rate limit, always hop to the next model; otherwise keep same one.
+      var nextModelIdx = isRateLimited ? modelIdx + 1 : modelIdx;
+      return delay(waitMs).then(function () {
+        return fetchWithRetry(promptText, attemptsLeft - 1, nextModelIdx);
       });
     });
   }
@@ -460,8 +478,7 @@
     fetchWebContext(text)
       .then(function (webContext) {
         var prompt = buildPrompt(text, webContext);
-        var url = API_ENDPOINT + encodeURIComponent(prompt) + "?model=openai";
-        return fetchWithRetry(url, MAX_ATTEMPTS);
+        return fetchWithRetry(prompt, MAX_ATTEMPTS, 0);
       })
       .then(function (reply) {
         typingBubble.remove();
@@ -474,6 +491,8 @@
         typingBubble.remove();
         var msg = err && err.name === "AbortError"
           ? "Не удалось получить ответ от сервера: сервер слишком долго не отвечал даже после нескольких попыток."
+          : err && err.status === 429
+          ? "Сервис ИИ сейчас перегружен (лимит запросов). Мы попробовали несколько моделей — все ограничены. Подождите немного и нажмите «Повторить»."
           : "Не удалось получить ответ: " + (err && err.message ? err.message : "неизвестная ошибка");
         var bubble = appendBubble("error", msg);
         var retryBtn = document.createElement("button");
