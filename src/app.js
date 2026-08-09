@@ -10,6 +10,14 @@
 "use strict";
 
 import { Wllama } from "@wllama/wllama";
+import {
+  getStackPresets,
+  buildProjectPrompt,
+  parseProjectFiles,
+  loadGithubSettings,
+  saveGithubSettings,
+  pushFilesToGithub,
+} from "./projectGen.js";
 
 var STORAGE_KEY = "ai_assistant_local_memory_v1";
 var PROFILE_KEY = "ai_assistant_profile_v1";
@@ -170,6 +178,13 @@ function buildMessages(userText) {
   var recent = history.slice(-CONTEXT_WINDOW);
   var systemParts = [
     "Ты — дружелюбный ИИ-ассистент, который отвечает кратко и по-русски.",
+    "Ты — маленькая модель (0.5B параметров), работающая полностью локально на устройстве, без интернета. " +
+      "Ты НЕ умеешь и не должна обещать: собирать APK/exe/установочные файлы, компилировать программы, " +
+      "выполнять код или иметь доступ к интернету/файловой системе устройства во время диалога. " +
+      "Если пользователь просит создать приложение, программу или файл (в том числе апк) — " +
+      "честно объясни это ограничение в одном предложении и посоветуй открыть раздел «Создать проект» " +
+      "(кнопка в верхней панели): там ты можешь сгенерировать простой код (HTML/JS, Python или Node.js) " +
+      "и пользователь сам отправит его в свой GitHub-репозиторий одной кнопкой.",
   ];
   if (profile.length) {
     systemParts.push("Что ты знаешь о пользователе: " + profile.join(" "));
@@ -373,4 +388,175 @@ lessonsBackBtn.addEventListener("click", function () {
   } else {
     lessonsScreen.classList.remove("open");
   }
+});
+
+// ---------------------------------------------------------------------
+// "Создать проект" screen — generates a small multi-file project with the
+// SAME on-device model used for chat (no cloud AI involved), then lets the
+// user push the generated files straight to a GitHub repo of their choice.
+// The GitHub Contents API calls below are the one deliberate exception to
+// this app's "zero network requests" design; they carry no model output
+// intelligence, only already-generated file contents, and only run when the
+// user explicitly taps "Отправить в GitHub".
+// ---------------------------------------------------------------------
+var projectBtn = document.getElementById("projectBtn");
+var projectScreen = document.getElementById("projectScreen");
+var projectBackBtn = document.getElementById("projectBackBtn");
+var descriptionInput = document.getElementById("projectDescription");
+var stackSelect = document.getElementById("stackSelect");
+var generateBtn = document.getElementById("generateBtn");
+var generateStatusEl = document.getElementById("generateStatus");
+var filesPreviewEl = document.getElementById("filesPreview");
+var pushBtn = document.getElementById("pushBtn");
+var pushStatusEl = document.getElementById("pushStatus");
+var ghTokenInput = document.getElementById("ghToken");
+var ghOwnerInput = document.getElementById("ghOwner");
+var ghRepoInput = document.getElementById("ghRepo");
+var ghBranchInput = document.getElementById("ghBranch");
+
+var generatedFiles = [];
+
+function renderStackOptions() {
+  var presets = getStackPresets();
+  stackSelect.innerHTML = "";
+  Object.keys(presets).forEach(function (key) {
+    var opt = document.createElement("option");
+    opt.value = key;
+    opt.textContent = presets[key].label;
+    stackSelect.appendChild(opt);
+  });
+}
+
+function loadGhSettingsIntoForm() {
+  var s = loadGithubSettings();
+  ghTokenInput.value = s.token || "";
+  ghOwnerInput.value = s.owner || "";
+  ghRepoInput.value = s.repo || "";
+  ghBranchInput.value = s.branch || "main";
+}
+
+function saveGhSettingsFromForm() {
+  saveGithubSettings({
+    token: ghTokenInput.value.trim(),
+    owner: ghOwnerInput.value.trim(),
+    repo: ghRepoInput.value.trim(),
+    branch: ghBranchInput.value.trim() || "main",
+  });
+}
+
+function renderFilesPreview(files) {
+  filesPreviewEl.innerHTML = "";
+  if (!files.length) return;
+  files.forEach(function (f) {
+    var block = document.createElement("div");
+    block.className = "file-block";
+    var header = document.createElement("div");
+    header.className = "file-block-header";
+    header.textContent = f.path;
+    var pre = document.createElement("pre");
+    pre.textContent = f.content;
+    block.appendChild(header);
+    block.appendChild(pre);
+    filesPreviewEl.appendChild(block);
+  });
+}
+
+function renderPushStatus(lines) {
+  pushStatusEl.innerHTML = "";
+  lines.forEach(function (line) {
+    var row = document.createElement("div");
+    row.className = "push-row push-" + line.status;
+    row.textContent = line.text;
+    pushStatusEl.appendChild(row);
+  });
+}
+
+renderStackOptions();
+loadGhSettingsIntoForm();
+
+projectBtn.addEventListener("click", function () {
+  projectScreen.classList.add("open");
+});
+
+projectBackBtn.addEventListener("click", function () {
+  projectScreen.classList.remove("open");
+});
+
+generateBtn.addEventListener("click", function () {
+  var description = descriptionInput.value.trim();
+  if (!description) {
+    generateStatusEl.textContent = "Опишите, какое приложение сгенерировать.";
+    return;
+  }
+  var stackKey = stackSelect.value;
+  generateBtn.disabled = true;
+  generateStatusEl.textContent = "загрузка локальной модели...";
+  filesPreviewEl.innerHTML = "";
+  pushStatusEl.innerHTML = "";
+  generatedFiles = [];
+
+  ensureModelLoaded()
+    .then(function () {
+      generateStatusEl.textContent = "генерирую проект локальной моделью (может занять минуту)...";
+      return wllama.createChatCompletion({
+        messages: buildProjectPrompt(description, stackKey),
+        nPredict: 700,
+        sampling: { temp: 0.4, top_p: 0.9 },
+      });
+    })
+    .then(function (result) {
+      var raw = (result && result.choices && result.choices[0] && result.choices[0].message && result.choices[0].message.content) || "";
+      var parsed = parseProjectFiles(raw);
+      if (parsed.error) {
+        generateStatusEl.textContent = parsed.error + " Попробуйте упростить описание и повторить.";
+        var rawBlock = document.createElement("pre");
+        rawBlock.className = "raw-fallback";
+        rawBlock.textContent = raw;
+        filesPreviewEl.appendChild(rawBlock);
+        return;
+      }
+      generatedFiles = parsed.files;
+      generateStatusEl.textContent = "Готово: сгенерировано файлов — " + generatedFiles.length + ". Проверьте код ниже перед отправкой.";
+      renderFilesPreview(generatedFiles);
+    })
+    .catch(function (err) {
+      generateStatusEl.textContent = "Ошибка генерации: " + (err && err.message ? err.message : "неизвестная ошибка");
+    })
+    .finally(function () {
+      generateBtn.disabled = false;
+    });
+});
+
+pushBtn.addEventListener("click", function () {
+  saveGhSettingsFromForm();
+  var cfg = loadGithubSettings();
+  if (!generatedFiles.length) {
+    renderPushStatus([{ status: "error", text: "Сначала сгенерируйте проект." }]);
+    return;
+  }
+  pushBtn.disabled = true;
+  var lines = generatedFiles.map(function (f) { return { path: f.path, status: "pending", text: f.path + " — в очереди" }; });
+  renderPushStatus(lines);
+
+  pushFilesToGithub(cfg, generatedFiles, function (path, status, detail) {
+    var line = lines.find(function (l) { return l.path === path; });
+    if (!line) return;
+    if (status === "pushing") {
+      line.status = "pending";
+      line.text = path + " — отправка...";
+    } else if (status === "done") {
+      line.status = "done";
+      line.text = path + " — ✓ отправлено";
+    } else if (status === "error") {
+      line.status = "error";
+      line.text = path + " — ✗ ошибка: " + detail;
+    }
+    renderPushStatus(lines);
+  })
+    .catch(function (err) {
+      renderPushStatus([{ status: "error", text: "Не удалось отправить: " + (err && err.message ? err.message : String(err)) }]);
+    })
+    .finally(function () {
+      pushBtn.disabled = false;
+    });
 });
