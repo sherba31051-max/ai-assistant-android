@@ -192,6 +192,44 @@
     font-size: 13px;
     font-weight: 600;
   }
+  .codegen-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .codegen-repo-btn {
+    background: #24292f;
+    color: white;
+    border: 1px solid #3a3f47;
+    border-radius: 10px;
+    padding: 9px 14px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .codegen-repo-btn:disabled {
+    opacity: 0.6;
+  }
+  .codegen-repo-status {
+    font-size: 12px;
+    color: #9aa1ab;
+    margin-top: 6px;
+    min-height: 14px;
+  }
+  .codegen-repo-links {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .codegen-link {
+    font-size: 13px;
+    color: #8fb8ff;
+    text-decoration: underline;
+  }
+  .codegen-link.primary {
+    color: #7ee787;
+    font-weight: 600;
+  }
   #inputbar {
     display: flex; align-items: flex-end; gap: 8px;
     padding: 10px 12px calc(env(safe-area-inset-bottom, 10px) + 10px) 12px;

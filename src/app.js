@@ -11,6 +11,7 @@
 
 import { Wllama } from "@wllama/wllama";
 import * as ghAuth from "./github-auth.js";
+import { createRepoAndPush } from "./github-push.js";
 import { generateProject } from "./codegen-engine.js";
 import { createZip, bytesToBase64 } from "./zip-writer.js";
 
@@ -138,8 +139,8 @@ function renderAll() {
     messagesEl.appendChild(hint);
     return;
   }
-  history.forEach(function (m) {
-    renderMessageBubble(m);
+  history.forEach(function (m, idx) {
+    renderMessageBubble(m, idx);
   });
   scrollToBottom();
 }
@@ -147,11 +148,11 @@ function renderAll() {
 // Отрисовывает одно сообщение истории: обычный текстовый пузырь либо,
 // если content начинается с CODEGEN_MARKER, — карточку сгенерированного
 // проекта (список файлов + кнопка скачивания .zip).
-function renderMessageBubble(m) {
+function renderMessageBubble(m, idx) {
   if (m.role === "assistant" && typeof m.content === "string" && m.content.indexOf(CODEGEN_MARKER) === 0) {
     try {
       var result = JSON.parse(m.content.slice(CODEGEN_MARKER.length));
-      appendCodegenBubble(result);
+      appendCodegenBubble(result, idx);
       return;
     } catch (e) {
       // повреждённые данные в истории — просто покажем как текст ниже
@@ -173,7 +174,7 @@ function appendBubble(kind, text) {
 // содержимого + кнопка "Скачать .zip". Никаких сетевых запросов —
 // архив собирается на устройстве (zip-writer.js) и скачивается через
 // data:-ссылку.
-function appendCodegenBubble(result) {
+function appendCodegenBubble(result, historyIdx) {
   var div = document.createElement("div");
   div.className = "msg ai codegen";
 
@@ -199,13 +200,70 @@ function appendCodegenBubble(result) {
   });
   div.appendChild(fileList);
 
+  var actions = document.createElement("div");
+  actions.className = "codegen-actions";
+
   var downloadBtn = document.createElement("button");
   downloadBtn.className = "codegen-download-btn";
   downloadBtn.textContent = "Скачать .zip";
   downloadBtn.addEventListener("click", function () {
     downloadCodegenZip(result);
   });
-  div.appendChild(downloadBtn);
+  actions.appendChild(downloadBtn);
+
+  var repoBtn = document.createElement("button");
+  repoBtn.className = "codegen-repo-btn";
+  actions.appendChild(repoBtn);
+  div.appendChild(actions);
+
+  var repoStatus = document.createElement("div");
+  repoStatus.className = "codegen-repo-status";
+  div.appendChild(repoStatus);
+
+  var repoLinks = document.createElement("div");
+  repoLinks.className = "codegen-repo-links";
+  div.appendChild(repoLinks);
+
+  function renderRepoState() {
+    if (result.repo) {
+      repoBtn.disabled = true;
+      repoBtn.textContent = "Репозиторий создан";
+      repoStatus.textContent = "";
+      repoLinks.innerHTML =
+        '<a class="codegen-link" target="_blank" rel="noopener" href="' + result.repo.repoUrl + '">Открыть репозиторий на GitHub</a>' +
+        '<a class="codegen-link primary" target="_blank" rel="noopener" href="' + result.repo.zipUrl + '">Скачать готовый файл (.zip)</a>';
+    } else {
+      repoBtn.disabled = false;
+      repoBtn.textContent = "Создать репозиторий на GitHub";
+      repoLinks.innerHTML = "";
+    }
+  }
+  renderRepoState();
+
+  repoBtn.addEventListener("click", function () {
+    if (!ghAuth.isLoggedIn()) {
+      repoStatus.textContent = "Сначала войдите через GitHub (кнопка «GitHub» в шапке), затем повторите.";
+      return;
+    }
+    repoBtn.disabled = true;
+    repoStatus.textContent = "Создаю репозиторий...";
+    createRepoAndPush(ghAuth.getToken(), result.meta, result.files, function (status) {
+      repoStatus.textContent = status;
+    })
+      .then(function (repo) {
+        result.repo = repo;
+        if (typeof historyIdx === "number" && history[historyIdx]) {
+          history[historyIdx].content = CODEGEN_MARKER + JSON.stringify(result);
+          saveHistory();
+        }
+        repoStatus.textContent = "Готово!";
+        renderRepoState();
+      })
+      .catch(function (err) {
+        repoBtn.disabled = false;
+        repoStatus.textContent = "Ошибка: " + (err && err.message ? err.message : "неизвестная ошибка");
+      });
+  });
 
   messagesEl.appendChild(div);
   return div;
@@ -572,7 +630,7 @@ function renderGhLoggedIn() {
 
 function renderGhLoggedOut() {
   ghBody.innerHTML =
-    '<p>Войдите через GitHub, чтобы связать аккаунт. Это единственная функция приложения, которая обращается к сети — только к github.com, и только по вашему запросу.</p>' +
+    '<p>Войдите через GitHub, чтобы связать аккаунт и (по желанию) публиковать сгенерированные офлайн-движком проекты в новый репозиторий. Это единственная функция приложения, которая обращается к сети — только к github.com, и только по вашему запросу.</p>' +
     '<button class="gh-btn" id="ghStartBtn">Войти через GitHub</button>' +
     '<div id="ghDynamic"></div>';
   document.getElementById("ghStartBtn").addEventListener("click", startGhLogin);

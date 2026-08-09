@@ -62,7 +62,10 @@ export function requestDeviceCode(clientId) {
   return fetch("https://github.com/login/device/code", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-    body: formBody({ client_id: clientId, scope: "read:user" }),
+    // "repo" scope is needed so the app can create a new repository and
+    // push a generated project on the user's behalf (see github-push.js).
+    // Still only ever talks to github.com, and only after an explicit tap.
+    body: formBody({ client_id: clientId, scope: "read:user repo" }),
   }).then(function (res) {
     if (!res.ok) throw new Error("HTTP " + res.status);
     return res.json();
