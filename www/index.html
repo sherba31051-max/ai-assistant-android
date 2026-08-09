@@ -145,6 +145,53 @@
     font-size: 14px;
     padding: 0 24px;
   }
+  /* Карточка результата офлайн-движка генерации кода — отображается
+     прямо в потоке сообщений, как обычный ответ ассистента. */
+  .msg.codegen {
+    max-width: 92%;
+    background: var(--bubble-ai);
+  }
+  .codegen-summary {
+    font-size: 14px;
+    margin-bottom: 8px;
+  }
+  .codegen-files {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .codegen-files details {
+    background: #1a1c21;
+    border: 1px solid #2a2d34;
+    border-radius: 8px;
+    padding: 6px 10px;
+  }
+  .codegen-files summary {
+    font-size: 13px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: #8fb8ff;
+    cursor: pointer;
+  }
+  .codegen-files pre {
+    margin: 8px 0 2px;
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    color: #b7e07a;
+    max-height: 260px;
+    overflow-y: auto;
+  }
+  .codegen-download-btn {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 9px 14px;
+    font-size: 13px;
+    font-weight: 600;
+  }
   #inputbar {
     display: flex; align-items: flex-end; gap: 8px;
     padding: 10px 12px calc(env(safe-area-inset-bottom, 10px) + 10px) 12px;
@@ -333,7 +380,7 @@
   </header>
   <div id="messages"></div>
   <div id="inputbar">
-    <textarea id="textInput" rows="1" placeholder="Напишите сообщение..."></textarea>
+    <textarea id="textInput" rows="1" placeholder="Напишите сообщение или «сгенерируй код...»"></textarea>
     <button id="sendBtn" aria-label="Отправить">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
     </button>

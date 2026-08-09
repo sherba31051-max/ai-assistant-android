@@ -11,6 +11,8 @@
 
 import { Wllama } from "@wllama/wllama";
 import * as ghAuth from "./github-auth.js";
+import { generateProject } from "./codegen-engine.js";
+import { createZip, bytesToBase64 } from "./zip-writer.js";
 
 var STORAGE_KEY = "ai_assistant_local_memory_v1";
 var PROFILE_KEY = "ai_assistant_profile_v1";
@@ -18,6 +20,36 @@ var MODEL_URL = "models/model.gguf"; // bundled asset, relative to www/
 var WASM_URL = "vendor/wllama.wasm"; // bundled asset, relative to www/
 var N_CTX = 2048;
 var MAX_NEW_TOKENS = 256;
+
+// ---------------------------------------------------------------------
+// Локальный движок генерации кода — работает прямо внутри окна чата
+// (без отдельной вкладки/шторки): если сообщение похоже на запрос
+// "сгенерируй код/проект/скрипт", ответ формируется мгновенно детерми-
+// нированным движком (codegen-engine.js), БЕЗ обращения к локальной
+// ИИ-модели и без сети. Результат сохраняется в той же истории чата,
+// что и обычные сообщения.
+// ---------------------------------------------------------------------
+var CODEGEN_MARKER = "\u0000CODEGEN\u0000";
+var CODEGEN_TRIGGER_RE = new RegExp(
+  "(сгенерируй|сгенерировать|напиши код|напиши скрипт|напиши программу|" +
+    "создай проект|создай скрипт|создай приложение|создай бота|" +
+    "сделай скрипт|сделай проект|сделай бота|сделай приложение|" +
+    "write code|generate code|generate a project|create a project|" +
+    "create an app|write a script|write a program)",
+  "i"
+);
+
+function isCodegenRequest(text) {
+  if (/^\/code\b/i.test(text)) return true;
+  if (/^код\s*:/i.test(text)) return true;
+  return CODEGEN_TRIGGER_RE.test(text);
+}
+
+function extractCodegenTask(text) {
+  if (/^\/code\b/i.test(text)) return text.replace(/^\/code\s*/i, "");
+  if (/^код\s*:/i.test(text)) return text.replace(/^код\s*:\s*/i, "");
+  return text;
+}
 
 var messagesEl = document.getElementById("messages");
 var inputEl = document.getElementById("textInput");
@@ -101,14 +133,31 @@ function renderAll() {
     hint.className = "empty-hint";
     hint.textContent =
       "Это ваш личный ИИ-ассистент. Модель работает полностью на устройстве, " +
-      "без интернета и без аккаунта. Напишите что-нибудь, чтобы начать.";
+      "без интернета и без аккаунта. Напишите что-нибудь, чтобы начать, или " +
+      'попросите "сгенерируй код ..." — офлайн-движок соберёт готовый проект.';
     messagesEl.appendChild(hint);
     return;
   }
   history.forEach(function (m) {
-    appendBubble(m.role === "user" ? "user" : "ai", m.content);
+    renderMessageBubble(m);
   });
   scrollToBottom();
+}
+
+// Отрисовывает одно сообщение истории: обычный текстовый пузырь либо,
+// если content начинается с CODEGEN_MARKER, — карточку сгенерированного
+// проекта (список файлов + кнопка скачивания .zip).
+function renderMessageBubble(m) {
+  if (m.role === "assistant" && typeof m.content === "string" && m.content.indexOf(CODEGEN_MARKER) === 0) {
+    try {
+      var result = JSON.parse(m.content.slice(CODEGEN_MARKER.length));
+      appendCodegenBubble(result);
+      return;
+    } catch (e) {
+      // повреждённые данные в истории — просто покажем как текст ниже
+    }
+  }
+  appendBubble(m.role === "user" ? "user" : "ai", m.content);
 }
 
 function appendBubble(kind, text) {
@@ -117,6 +166,64 @@ function appendBubble(kind, text) {
   div.textContent = text;
   messagesEl.appendChild(div);
   return div;
+}
+
+// Рендерит результат работы офлайн-движка генерации кода прямо в окне
+// переписки: короткое резюме + сворачиваемый список файлов с превью
+// содержимого + кнопка "Скачать .zip". Никаких сетевых запросов —
+// архив собирается на устройстве (zip-writer.js) и скачивается через
+// data:-ссылку.
+function appendCodegenBubble(result) {
+  var div = document.createElement("div");
+  div.className = "msg ai codegen";
+
+  var summary = document.createElement("div");
+  summary.className = "codegen-summary";
+  summary.textContent =
+    "Готово \u2014 сгенерировал проект «" + result.meta.title + "» (" +
+    result.meta.language + ", " + result.meta.fileCount + " файл(ов)), " +
+    "локально и без ИИ-модели.";
+  div.appendChild(summary);
+
+  var fileList = document.createElement("div");
+  fileList.className = "codegen-files";
+  result.files.forEach(function (f) {
+    var details = document.createElement("details");
+    var fsummary = document.createElement("summary");
+    fsummary.textContent = f.path;
+    var pre = document.createElement("pre");
+    pre.textContent = f.content;
+    details.appendChild(fsummary);
+    details.appendChild(pre);
+    fileList.appendChild(details);
+  });
+  div.appendChild(fileList);
+
+  var downloadBtn = document.createElement("button");
+  downloadBtn.className = "codegen-download-btn";
+  downloadBtn.textContent = "Скачать .zip";
+  downloadBtn.addEventListener("click", function () {
+    downloadCodegenZip(result);
+  });
+  div.appendChild(downloadBtn);
+
+  messagesEl.appendChild(div);
+  return div;
+}
+
+// Собирает .zip из сгенерированных файлов и запускает скачивание через
+// временную <a download> ссылку с data: URI (работает офлайн, без
+// blob-URL, надёжно даже в WebView внутри APK).
+function downloadCodegenZip(result) {
+  var zipFiles = result.files.map(function (f) { return { path: f.path, content: f.content }; });
+  var bytes = createZip(zipFiles);
+  var base64 = bytesToBase64(bytes);
+  var a = document.createElement("a");
+  a.href = "data:application/zip;base64," + base64;
+  a.download = result.meta.slug + ".zip";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 function scrollToBottom() {
@@ -177,6 +284,9 @@ function buildMessages(userText) {
   }
   var messages = [{ role: "system", content: systemParts.join(" ") }];
   recent.forEach(function (m) {
+    // Карточки сгенерированного кода — не текст для модели, пропускаем их
+    // при формировании prompt'а для чата (движок кода не связан с LLM).
+    if (typeof m.content === "string" && m.content.indexOf(CODEGEN_MARKER) === 0) return;
     messages.push({ role: m.role === "user" ? "user" : "assistant", content: m.content });
   });
   messages.push({ role: "user", content: userText });
@@ -195,6 +305,20 @@ function sendMessage() {
 
   inputEl.value = "";
   autoGrow();
+
+  // Запрос на генерацию кода обрабатывается отдельно и мгновенно, не
+  // трогая локальную ИИ-модель: чистый детерминированный движок
+  // (codegen-engine.js), результат добавляется в ту же историю чата.
+  if (isCodegenRequest(text)) {
+    var task = extractCodegenTask(text);
+    var result = generateProject(task);
+    var marker = CODEGEN_MARKER + JSON.stringify(result);
+    history.push({ role: "assistant", content: marker });
+    saveHistory();
+    renderAll();
+    inputEl.focus();
+    return;
+  }
 
   var typingBubble = appendBubble("typing", "печатает...");
   scrollToBottom();
