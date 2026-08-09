@@ -5,7 +5,6 @@ const config: CapacitorConfig = {
   appName: "AI Assistant",
   webDir: "www",
   server: {
-    url: "https://ai-assistant-poreq51.adaptive.ai",
     androidScheme: "https",
     cleartext: false,
   },
