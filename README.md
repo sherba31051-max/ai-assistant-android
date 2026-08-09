@@ -1,10 +1,12 @@
 # AI Assistant — Android APK
 
-Android wrapper (Capacitor WebView) for the [AI Assistant](https://ai-assistant-poreq51.adaptive.ai) web app — a universal AI chat assistant with live web search and persistent memory.
+A fully self-contained, standalone AI chat app for Android, built with Capacitor.
 
 ## How it works
 
-This is a Capacitor Android project configured to load the live web app URL (`https://ai-assistant-poreq51.adaptive.ai`) inside a native WebView shell, producing a real installable `.apk`.
+Unlike earlier versions, this app no longer loads any remote website in a WebView. All UI and logic (`www/index.html`) is bundled directly inside the APK. The **only** network calls made at runtime go straight from the device to a free, public, no-signup AI text inference endpoint (`text.pollinations.ai`) — there is no intermediary server and no external backend involved.
+
+Chat history is kept as local memory in the device's `localStorage`, so conversations persist across app restarts without any account or cloud sync.
 
 ## Getting the APK
 
