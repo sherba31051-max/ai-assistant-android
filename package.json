@@ -1,0 +1,28 @@
+{
+  "name": "ai-assistant-android",
+  "version": "1.0.0",
+  "description": "Android APK wrapper (Capacitor) for the ai-assistant AI chat app, built via GitHub Actions CI",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sherba31051-max/ai-assistant-android.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/sherba31051-max/ai-assistant-android/issues"
+  },
+  "homepage": "https://github.com/sherba31051-max/ai-assistant-android#readme",
+  "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/cli": "^8.5.0",
+    "@capacitor/core": "^8.5.0"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}
