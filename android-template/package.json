@@ -1,0 +1,11 @@
+{
+  "appId": "ai.adaptive.generated",
+  "appName": "Generated App",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

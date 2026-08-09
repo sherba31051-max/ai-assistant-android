@@ -1,0 +1,15 @@
+node_modules/
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+android/captures/
+*.log
+.DS_Store
+
+# Generated at build time (npm run build / npm run fetch:model) — never
+# committed, since the model weights are ~380MB and the wasm/bundle are
+# reproducible build artifacts.
+www/app.bundle.js
+www/vendor/
+www/models/
