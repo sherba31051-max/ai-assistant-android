@@ -10,12 +10,17 @@
 // through native Android networking instead of the WebView's fetch.
 "use strict";
 
+// Client ID of the "AI Assistant" GitHub OAuth App (Device Flow enabled).
+// Client IDs are public by design (they identify the app, not a secret),
+// so it's safe to bake this in — users just tap the button, no setup step.
+var DEFAULT_CLIENT_ID = "Ov23li2iEvzggHnQLOEx";
+
 var CLIENT_ID_KEY = "gh_oauth_client_id_v1";
 var TOKEN_KEY = "gh_oauth_token_v1";
 var USER_KEY = "gh_oauth_user_v1";
 
 export function getClientId() {
-  return localStorage.getItem(CLIENT_ID_KEY) || "";
+  return localStorage.getItem(CLIENT_ID_KEY) || DEFAULT_CLIENT_ID;
 }
 
 export function setClientId(id) {

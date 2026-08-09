@@ -447,10 +447,8 @@ function renderGhLoggedIn() {
 }
 
 function renderGhLoggedOut() {
-  var savedClientId = ghAuth.getClientId();
   ghBody.innerHTML =
-    '<p>Войдите через GitHub (OAuth Device Flow), чтобы связать аккаунт. Это единственная функция приложения, которая обращается к сети — только к github.com, и только по вашему запросу.</p>' +
-    '<input id="ghClientIdInput" placeholder="Client ID вашего GitHub OAuth App" value="' + (savedClientId || "").replace(/"/g, "&quot;") + '" />' +
+    '<p>Войдите через GitHub, чтобы связать аккаунт. Это единственная функция приложения, которая обращается к сети — только к github.com, и только по вашему запросу.</p>' +
     '<button class="gh-btn" id="ghStartBtn">Войти через GitHub</button>' +
     '<div id="ghDynamic"></div>';
   document.getElementById("ghStartBtn").addEventListener("click", startGhLogin);
@@ -467,13 +465,8 @@ function renderGhScreen() {
 }
 
 function startGhLogin() {
-  var clientId = (document.getElementById("ghClientIdInput").value || "").trim();
+  var clientId = ghAuth.getClientId();
   var dynamic = document.getElementById("ghDynamic");
-  if (!clientId) {
-    dynamic.innerHTML = '<div class="gh-error">Укажите Client ID GitHub OAuth App (создаётся бесплатно в настройках GitHub → Developer settings → OAuth Apps).</div>';
-    return;
-  }
-  ghAuth.setClientId(clientId);
   document.getElementById("ghStartBtn").disabled = true;
   dynamic.innerHTML = '<div class="gh-status">Запрашиваю код у GitHub...</div>';
 
