@@ -35,6 +35,8 @@
         </provider>
     </application>
 
-    <!-- No permissions required: the app runs a local LLM entirely on-device
-         and makes zero network requests at runtime. -->
+    <!-- INTERNET is needed ONLY for the optional GitHub login/push feature
+         (OAuth Device Flow + Contents API). Chat, lessons and the code
+         generation engine never make a network request. -->
+    <uses-permission android:name="android.permission.INTERNET" />
 </manifest>
