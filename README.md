@@ -1,29 +1,66 @@
 # AI Assistant — Android APK
 
-A fully self-contained, standalone AI chat app for Android, built with Capacitor.
+Полностью автономное (offline-first) Android-приложение с ИИ-чатом. Инференс модели выполняется **прямо на устройстве** — ни один запрос к какому-либо ИИ-серверу, API или облаку не отправляется во время работы приложения.
 
-## How it works
+## Архитектура
 
-Unlike earlier versions, this app no longer loads any remote website in a WebView. All UI and logic (`www/index.html`) is bundled directly inside the APK. The **only** network calls made at runtime go straight from the device to a free, public, no-signup AI text inference endpoint (`text.pollinations.ai`) — there is no intermediary server and no external backend involved.
+| Компонент | Что это | Где живёт |
+|---|---|---|
+| UI и логика чата | Обычный HTML/CSS/JS (`www/index.html`, `src/app.js`) | Внутри APK, WebView (Capacitor) |
+| Модель | **Qwen2.5-0.5B-Instruct**, квантована в GGUF (Q4_K_M, ~380 МБ) | `www/models/model.gguf`, зашита в APK как asset |
+| Инференс-движок | **wllama** — WebAssembly-сборка `llama.cpp` (~7.6 МБ, однопоточная сборка) | `www/vendor/wllama.wasm`, зашита в APK как asset |
+| Память диалога | `localStorage` устройства | На устройстве, без аккаунта и облачной синхронизации |
+| Уроки по языкам программирования | Статический JSON (`www/lessons.js`) | Полностью офлайн, без сети |
 
-Chat history is kept as local memory in the device's `localStorage`, so conversations persist across app restarts without any account or cloud sync.
+**На устройстве во время работы приложения — ноль сетевых запросов.** Разрешение `INTERNET` в манифесте не запрашивается вообще. Модель и WASM-движок докачиваются и упаковываются **только на этапе сборки** (в GitHub Actions), а не на телефоне пользователя.
 
-## Getting the APK
+## Как это работает по шагам
 
-Every push to `main` triggers a GitHub Actions build:
+1. При старте приложение инициализирует `wllama` (WASM-биндинг `llama.cpp`) и асинхронно загружает `model.gguf` — оба файла уже лежат внутри APK, поэтому загрузка идёт с диска устройства, не из интернета.
+2. Каждое сообщение пользователя вместе с коротким окном истории (6 последних сообщений) и «профилем» пользователя (простые факты типа имени/города, извлечённые regex-эвристикой без ИИ) собирается в chat-prompt и подаётся в `wllama.createChatCompletion(...)`.
+3. Модель генерирует ответ локально, на CPU устройства через WASM. Результат сохраняется в `localStorage` и рендерится в чат.
 
-1. Go to the **Actions** tab → latest successful run → download the `ai-assistant-debug-apk` artifact, **or**
-2. Go to the **Releases** page and download the attached `.apk` directly.
+## Известные ограничения этого подхода (осознанный трейд-офф)
 
-The APK is a debug build (auto-signed with Gradle's debug keystore), so it installs directly on Android — just enable "install from unknown sources" if prompted.
+- **Размер APK**: с ~5 МБ (старая версия на удалённом ИИ-эндпоинте) до **~400+ МБ** — почти весь вес — это сами веса модели.
+- **Нужен сборочный пайплайн**: раньше это был один HTML-файл без сборки; теперь есть `npm run build` (esbuild-бандл + копирование wasm) и отдельный шаг скачивания модели в CI.
+- **"Обучение в реальном времени по открытым источникам" невозможно**: модель статична, её веса зашиты при сборке. Обновить знания модели — значит выпустить новую сборку с новыми/дообученными весами, а не "учить" её на устройстве.
+- **Качество ответов ограничено размером модели** (0.5B параметров) — это компромисс в пользу разумного размера APK и приемлемой скорости на слабом железе. Более крупная модель (1.5B/3B) даст лучше ответы, но кратно увеличит и APK, и время генерации.
+- **Скорость генерации** зависит от CPU устройства — на слабых/старых телефонах ответ может занимать заметное время (это чистый CPU-инференс через WASM, без GPU-ускорения).
 
-## Local build
+## Получение APK
+
+Каждый push в `main` запускает GitHub Actions:
+
+1. **Actions** → последний успешный запуск → скачать артефакт `ai-assistant-debug-apk`, **или**
+2. **Releases** → скачать приложенный `.apk`.
+
+APK — debug-сборка (авто-подписана debug-ключом Gradle), устанавливается напрямую (разрешить "установку из неизвестных источников").
+
+## Локальная сборка
 
 ```bash
 npm install
+npm run fetch:model   # скачивает Qwen2.5-0.5B-Instruct-GGUF (Q4_K_M, ~380 МБ) в www/models/model.gguf
+npm run build          # собирает JS-бандл (esbuild) + копирует wllama.wasm в www/vendor/
 npx cap sync android
 cd android
 ./gradlew assembleDebug
 ```
 
-Output: `android/app/build/outputs/apk/debug/app-debug.apk`
+Результат: `android/app/build/outputs/apk/debug/app-debug.apk`
+
+Модель можно переопределить через переменную окружения `AI_ASSISTANT_MODEL_URL` (должна указывать на .gguf файл), например, чтобы взять другой квант или другую модель того же формата.
+
+## Структура проекта
+
+```
+src/app.js          — вся логика чата и загрузки модели (ES-модуль, собирается esbuild)
+www/index.html       — разметка и стили (без inline-логики)
+www/lessons.js        — статичные офлайн-уроки по языкам программирования
+www/app.bundle.js     — генерируется при сборке (npm run build), в git не хранится
+www/vendor/wllama.wasm — генерируется при сборке, в git не хранится
+www/models/model.gguf  — скачивается при сборке (npm run fetch:model), в git не хранится
+scripts/fetch-model.mjs — скрипт скачивания весов модели
+scripts/copy-wasm.mjs    — скрипт копирования wasm-биндинга
+```

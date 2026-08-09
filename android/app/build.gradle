@@ -14,6 +14,11 @@ android {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+            // The bundled local LLM (model.gguf) and the wllama wasm binary
+            // must NOT be gzip-recompressed into the APK: they are already
+            // dense binary data, and WebView needs to be able to mmap/stream
+            // them directly for wllama to load them efficiently.
+            noCompress 'gguf', 'wasm'
         }
     }
     buildTypes {

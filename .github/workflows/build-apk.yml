@@ -31,6 +31,18 @@ jobs:
       - name: Install npm dependencies
         run: npm install
 
+      - name: Cache local LLM model weights
+        uses: actions/cache@v4
+        with:
+          path: www/models/model.gguf
+          key: model-gguf-qwen2.5-0.5b-instruct-q4_k_m-v1
+
+      - name: Download local LLM model weights (build-time only)
+        run: npm run fetch:model
+
+      - name: Build JS bundle + copy wllama wasm asset
+        run: npm run build
+
       - name: Capacitor sync
         run: npx cap sync android
 
@@ -43,6 +55,9 @@ jobs:
 
       - name: Rename APK
         run: cp android/app/build/outputs/apk/debug/app-debug.apk ai-assistant-debug.apk
+
+      - name: Report APK size
+        run: du -h ai-assistant-debug.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

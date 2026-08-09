@@ -35,7 +35,6 @@
         </provider>
     </application>
 
-    <!-- Permissions -->
-
-    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- No permissions required: the app runs a local LLM entirely on-device
+         and makes zero network requests at runtime. -->
 </manifest>
