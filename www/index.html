@@ -197,6 +197,63 @@
   }
   #langList.open, #lessonList.open { display: block; }
   #langList, #lessonList { display: none; }
+
+  /* GitHub + Create screens (share #lessonsHeader/#lessonsBody layout) */
+  #githubScreen, #createScreen {
+    position: fixed; inset: 0;
+    background: var(--bg);
+    display: none;
+    flex-direction: column;
+    z-index: 20;
+  }
+  #githubScreen.open, #createScreen.open { display: flex; }
+  .screen-hint { font-size: 13px; color: var(--text-dim); line-height: 1.5; margin: 0 0 14px; }
+  .field-row { margin-bottom: 14px; }
+  .field-row label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
+  .field-row input, .field-row textarea, .field-row-inline select {
+    width: 100%;
+    background: #1a1c21;
+    border: 1px solid #2a2d34;
+    color: var(--text);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    resize: vertical;
+  }
+  .field-row-inline { display: flex; gap: 10px; margin-bottom: 14px; }
+  .field-row-inline > div { flex: 1; }
+  .field-row-inline label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
+  .primary-btn {
+    width: 100%;
+    background: var(--accent); color: white; border: none;
+    border-radius: 10px; padding: 12px; font-size: 15px; font-weight: 600;
+  }
+  .primary-btn:disabled { opacity: 0.5; }
+  .secondary-btn {
+    width: 100%;
+    background: var(--bubble-ai); color: var(--text);
+    border: 1px solid #2a2d34;
+    border-radius: 10px; padding: 12px; font-size: 14px; margin-top: 10px;
+  }
+  .device-code-box { margin-top: 16px; text-align: center; }
+  .device-code {
+    font-size: 28px; font-weight: 700; letter-spacing: 4px;
+    background: var(--bubble-ai); border: 1px solid #2a2d34;
+    border-radius: 10px; padding: 14px; margin-bottom: 10px;
+  }
+  .gh-user-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .gh-avatar { width: 48px; height: 48px; border-radius: 50%; background: #2a2d34; }
+  .gh-login { font-size: 15px; font-weight: 600; }
+  .plan-box, #createResultBox { margin-top: 18px; }
+  .plan-title { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+  #createPlanList { padding-left: 18px; margin: 0 0 10px; font-size: 13px; color: #cfd2d8; line-height: 1.6; }
+  .file-list { list-style: none; padding: 0; margin: 0 0 12px; font-size: 13px; }
+  .file-list li {
+    background: var(--bubble-ai); border: 1px solid #22252b;
+    border-radius: 8px; padding: 8px 12px; margin-bottom: 6px;
+    font-family: monospace;
+  }
 </style>
 </head>
 <body>
@@ -207,6 +264,8 @@
       <div class="sub" id="statusLine">загрузка локальной модели...</div>
     </div>
     <div class="actions">
+      <button id="createBtn">Создать</button>
+      <button id="githubBtn">GitHub</button>
       <button id="lessonsBtn">Уроки</button>
       <button id="clearBtn">Очистить</button>
     </div>
@@ -229,6 +288,96 @@
     <div id="langList" class="open"></div>
     <div id="lessonList"></div>
     <div id="lessonDetail"></div>
+  </div>
+</div>
+
+  </div>
+</div>
+
+<div id="githubScreen">
+  <div id="lessonsHeader">
+    <button id="githubBackBtn">‹ Назад</button>
+    <div class="title">Вход через GitHub</div>
+  </div>
+  <div id="lessonsBody">
+    <div id="githubLoggedOut">
+      <p class="screen-hint">Нужен только для входа и пуша проектов в твой GitHub. Всё остальное в приложении работает без интернета.</p>
+      <div class="field-row">
+        <label>Client ID OAuth-приложения (Device Flow)</label>
+        <input id="githubClientIdInput" type="text" placeholder="Например: Iv1.abc123..." />
+      </div>
+      <button id="githubLoginBtn" class="primary-btn">Войти через GitHub</button>
+      <div id="githubDeviceCodeBox" class="device-code-box" style="display:none;">
+        <div class="device-code" id="githubUserCode"></div>
+        <p>Открой <span id="githubVerifyUrl"></span> в браузере и введи код выше.</p>
+        <p id="githubPollStatus" class="screen-hint"></p>
+      </div>
+    </div>
+    <div id="githubLoggedIn" style="display:none;">
+      <div class="gh-user-row">
+        <img id="githubAvatar" class="gh-avatar" />
+        <div>
+          <div id="githubLogin" class="gh-login"></div>
+          <div class="screen-hint">Вход выполнен</div>
+        </div>
+      </div>
+      <button id="githubLogoutBtn" class="secondary-btn">Выйти</button>
+    </div>
+  </div>
+</div>
+
+<div id="createScreen">
+  <div id="lessonsHeader">
+    <button id="createBackBtn">‹ Назад</button>
+    <div class="title">Создать приложение</div>
+  </div>
+  <div id="lessonsBody">
+    <p class="screen-hint">Опиши задачу — язык и уровень сложности движок определит сам (можно переопределить). Дальше всё происходит без твоего участия.</p>
+    <div class="field-row">
+      <label>Описание задачи</label>
+      <textarea id="createTaskInput" rows="4" placeholder="Например: скрипт, который считает статистику по CSV-файлу"></textarea>
+    </div>
+    <div class="field-row-inline">
+      <div>
+        <label>Язык</label>
+        <select id="createLangSelect">
+          <option value="auto">Авто</option>
+          <option value="python">Python</option>
+          <option value="javascript">JavaScript</option>
+          <option value="java">Java</option>
+          <option value="kotlin">Kotlin</option>
+          <option value="bash">Bash</option>
+        </select>
+      </div>
+      <div>
+        <label>Сложность</label>
+        <select id="createComplexitySelect">
+          <option value="auto">Авто</option>
+          <option value="simple">Простой</option>
+          <option value="medium">Средний</option>
+          <option value="advanced">Продвинутый</option>
+        </select>
+      </div>
+    </div>
+    <button id="createGenerateBtn" class="primary-btn">Создать</button>
+    <div id="createPlanBox" class="plan-box" style="display:none;">
+      <div class="plan-title">План выполнения:</div>
+      <ul id="createPlanList"></ul>
+      <p id="createStatusLine" class="screen-hint"></p>
+    </div>
+    <div id="createResultBox" style="display:none;">
+      <div class="plan-title">Готово: <span id="createResultLang"></span></div>
+      <ul id="createFileList" class="file-list"></ul>
+      <button id="createDownloadBtn" class="secondary-btn">Скачать ZIP</button>
+      <div id="createPushBox" style="display:none;">
+        <div class="field-row">
+          <label>Имя репозитория на GitHub</label>
+          <input id="createRepoNameInput" type="text" placeholder="my-generated-project" />
+        </div>
+        <button id="createPushBtn" class="primary-btn">Запушить в GitHub</button>
+        <p id="createPushStatus" class="screen-hint"></p>
+      </div>
+    </div>
   </div>
 </div>
 

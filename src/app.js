@@ -10,6 +10,8 @@
 "use strict";
 
 import { Wllama } from "@wllama/wllama";
+import * as GithubAuth from "./github-auth.js";
+import * as CodeEngine from "./code-engine.js";
 
 var STORAGE_KEY = "ai_assistant_local_memory_v1";
 var PROFILE_KEY = "ai_assistant_profile_v1";
@@ -373,4 +375,200 @@ lessonsBackBtn.addEventListener("click", function () {
   } else {
     lessonsScreen.classList.remove("open");
   }
+});
+
+// ---------------------------------------------------------------------
+// GitHub login screen (Device Flow). The only feature in this app that
+// uses the network — everything else stays fully offline.
+// ---------------------------------------------------------------------
+var githubBtn = document.getElementById("githubBtn");
+var githubScreen = document.getElementById("githubScreen");
+var githubBackBtn = document.getElementById("githubBackBtn");
+var githubLoggedOut = document.getElementById("githubLoggedOut");
+var githubLoggedIn = document.getElementById("githubLoggedIn");
+var githubClientIdInput = document.getElementById("githubClientIdInput");
+var githubLoginBtn = document.getElementById("githubLoginBtn");
+var githubDeviceCodeBox = document.getElementById("githubDeviceCodeBox");
+var githubUserCode = document.getElementById("githubUserCode");
+var githubVerifyUrl = document.getElementById("githubVerifyUrl");
+var githubPollStatus = document.getElementById("githubPollStatus");
+var githubAvatar = document.getElementById("githubAvatar");
+var githubLoginLabel = document.getElementById("githubLogin");
+var githubLogoutBtn = document.getElementById("githubLogoutBtn");
+var currentLoginFlow = null;
+
+function renderGithubScreen() {
+  githubClientIdInput.value = GithubAuth.getClientId();
+  if (GithubAuth.isLoggedIn()) {
+    var user = GithubAuth.getUser();
+    githubLoggedOut.style.display = "none";
+    githubLoggedIn.style.display = "block";
+    if (user) {
+      githubAvatar.src = user.avatar_url || "";
+      githubLoginLabel.textContent = "@" + user.login;
+    }
+  } else {
+    githubLoggedOut.style.display = "block";
+    githubLoggedIn.style.display = "none";
+    githubDeviceCodeBox.style.display = "none";
+  }
+}
+
+githubBtn.addEventListener("click", function () {
+  renderGithubScreen();
+  githubScreen.classList.add("open");
+});
+githubBackBtn.addEventListener("click", function () {
+  githubScreen.classList.remove("open");
+});
+
+githubLoginBtn.addEventListener("click", function () {
+  var clientId = githubClientIdInput.value.trim();
+  if (!clientId) {
+    alert("Укажи Client ID OAuth-приложения GitHub (создаётся один раз в настройках GitHub, Device Flow включён).");
+    return;
+  }
+  GithubAuth.setClientId(clientId);
+  githubLoginBtn.disabled = true;
+  githubPollStatus.textContent = "запрашиваю код...";
+  githubDeviceCodeBox.style.display = "block";
+
+  currentLoginFlow = GithubAuth.loginWithDeviceFlow(clientId, function (kind, data) {
+    if (kind === "code") {
+      githubUserCode.textContent = data.user_code;
+      githubVerifyUrl.textContent = data.verification_uri;
+      githubPollStatus.textContent = "ожидание подтверждения...";
+    } else if (kind === "polling") {
+      githubPollStatus.textContent = "ожидание подтверждения...";
+    }
+  });
+
+  currentLoginFlow
+    .then(function () {
+      githubLoginBtn.disabled = false;
+      renderGithubScreen();
+    })
+    .catch(function (err) {
+      githubLoginBtn.disabled = false;
+      githubPollStatus.textContent = "Ошибка: " + (err && err.message ? err.message : "не удалось войти");
+    });
+});
+
+githubLogoutBtn.addEventListener("click", function () {
+  GithubAuth.logout();
+  renderGithubScreen();
+});
+
+// ---------------------------------------------------------------------
+// "Создать приложение" screen — offline code-generation engine. Analyzes
+// the task, picks language/complexity, generates project files using the
+// same on-device model as the chat, and lets the user download a zip or
+// push straight to their GitHub (if logged in).
+// ---------------------------------------------------------------------
+var createBtn = document.getElementById("createBtn");
+var createScreen = document.getElementById("createScreen");
+var createBackBtn = document.getElementById("createBackBtn");
+var createTaskInput = document.getElementById("createTaskInput");
+var createLangSelect = document.getElementById("createLangSelect");
+var createComplexitySelect = document.getElementById("createComplexitySelect");
+var createGenerateBtn = document.getElementById("createGenerateBtn");
+var createPlanBox = document.getElementById("createPlanBox");
+var createPlanList = document.getElementById("createPlanList");
+var createStatusLine = document.getElementById("createStatusLine");
+var createResultBox = document.getElementById("createResultBox");
+var createResultLang = document.getElementById("createResultLang");
+var createFileList = document.getElementById("createFileList");
+var createDownloadBtn = document.getElementById("createDownloadBtn");
+var createPushBox = document.getElementById("createPushBox");
+var createRepoNameInput = document.getElementById("createRepoNameInput");
+var createPushBtn = document.getElementById("createPushBtn");
+var createPushStatus = document.getElementById("createPushStatus");
+var lastGeneratedProject = null;
+
+createBtn.addEventListener("click", function () {
+  createScreen.classList.add("open");
+});
+createBackBtn.addEventListener("click", function () {
+  createScreen.classList.remove("open");
+});
+
+createGenerateBtn.addEventListener("click", function () {
+  var task = createTaskInput.value.trim();
+  if (!task) {
+    alert("Опиши задачу перед созданием.");
+    return;
+  }
+  createGenerateBtn.disabled = true;
+  createPlanBox.style.display = "block";
+  createResultBox.style.display = "none";
+  createPushBox.style.display = "none";
+  createPlanList.innerHTML = "";
+  createStatusLine.textContent = "загрузка локальной модели...";
+
+  var overrides = {
+    language: createLangSelect.value !== "auto" ? createLangSelect.value : null,
+    complexity: createComplexitySelect.value !== "auto" ? createComplexitySelect.value : null,
+  };
+
+  ensureModelLoaded()
+    .then(function () {
+      createStatusLine.textContent = "анализирую задачу и генерирую проект...";
+      return CodeEngine.generateProject(wllama, task, overrides, function (plan) {
+        createPlanList.innerHTML = "";
+        plan.forEach(function (step) {
+          var li = document.createElement("li");
+          li.textContent = step;
+          createPlanList.appendChild(li);
+        });
+      });
+    })
+    .then(function (project) {
+      lastGeneratedProject = project;
+      createStatusLine.textContent = "готово";
+      createResultLang.textContent = project.language + " · " + project.complexity;
+      createFileList.innerHTML = "";
+      project.files.forEach(function (f) {
+        var li = document.createElement("li");
+        li.textContent = f.path;
+        createFileList.appendChild(li);
+      });
+      createResultBox.style.display = "block";
+      createPushBox.style.display = GithubAuth.isLoggedIn() ? "block" : "none";
+    })
+    .catch(function (err) {
+      createStatusLine.textContent = "Ошибка: " + (err && err.message ? err.message : "не удалось сгенерировать проект");
+    })
+    .finally(function () {
+      createGenerateBtn.disabled = false;
+    });
+});
+
+createDownloadBtn.addEventListener("click", function () {
+  if (!lastGeneratedProject) return;
+  var zipBytes = CodeEngine.buildZip(lastGeneratedProject.files);
+  CodeEngine.downloadZip(zipBytes, "generated-project.zip");
+});
+
+createPushBtn.addEventListener("click", function () {
+  if (!lastGeneratedProject) return;
+  var repoName = (createRepoNameInput.value || "").trim() || "generated-project-" + Date.now();
+  var token = GithubAuth.getToken();
+  if (!token) {
+    createPushStatus.textContent = "Сначала войди через GitHub.";
+    return;
+  }
+  createPushBtn.disabled = true;
+  createPushStatus.textContent = "создаю репозиторий...";
+  GithubAuth.pushProjectToGithub(token, repoName, lastGeneratedProject.files, function (idx, total, path) {
+    createPushStatus.textContent = "загружаю файл " + idx + "/" + total + ": " + path;
+  })
+    .then(function (repoUrl) {
+      createPushStatus.textContent = "Готово: " + repoUrl;
+    })
+    .catch(function (err) {
+      createPushStatus.textContent = "Ошибка: " + (err && err.message ? err.message : "не удалось запушить");
+    })
+    .finally(function () {
+      createPushBtn.disabled = false;
+    });
 });

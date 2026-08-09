@@ -1,7 +1,7 @@
 {
   "name": "ai-assistant-android",
   "version": "1.0.0",
-  "description": "Android APK wrapper (Capacitor) for the ai-assistant AI chat app, built via GitHub Actions CI",
+  "description": "Offline-first Android AI assistant: on-device chat (Qwen2.5-0.5B via wllama/WASM, no server), a local code-generation engine that turns a task description into a working multi-file project in Python/JS/Java/Kotlin/Bash, optional GitHub login (Device Flow) to push generated projects, and static programming lessons. Built via GitHub Actions CI.",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -26,7 +26,8 @@
     "@capacitor/android": "^8.5.0",
     "@capacitor/cli": "^8.5.0",
     "@capacitor/core": "^8.5.0",
-    "@wllama/wllama": "^3.5.1"
+    "@wllama/wllama": "^3.5.1",
+    "fflate": "^0.8.2"
   },
   "devDependencies": {
     "esbuild": "^0.24.0",
