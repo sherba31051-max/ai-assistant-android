@@ -10,6 +10,7 @@
 "use strict";
 
 import { Wllama } from "@wllama/wllama";
+import * as ghAuth from "./github-auth.js";
 
 var STORAGE_KEY = "ai_assistant_local_memory_v1";
 var PROFILE_KEY = "ai_assistant_profile_v1";
@@ -252,6 +253,42 @@ clearBtn.addEventListener("click", function () {
   renderAll();
 });
 
+// ---------------------------------------------------------------------
+// Shared in-window "sheet" mechanism — Lessons and GitHub both slide up
+// over the chat within the same screen/window instead of navigating away.
+// ---------------------------------------------------------------------
+var sheetBackdrop = document.getElementById("sheetBackdrop");
+var openSheetEl = null;
+
+function openSheet(el) {
+  closeSheet();
+  openSheetEl = el;
+  el.classList.add("mounted");
+  sheetBackdrop.classList.add("open");
+  // next frame so the transform transition actually animates in
+  requestAnimationFrame(function () {
+    requestAnimationFrame(function () {
+      el.classList.add("open");
+    });
+  });
+}
+
+function closeSheet() {
+  if (!openSheetEl) {
+    sheetBackdrop.classList.remove("open");
+    return;
+  }
+  var el = openSheetEl;
+  openSheetEl = null;
+  el.classList.remove("open");
+  sheetBackdrop.classList.remove("open");
+  setTimeout(function () {
+    el.classList.remove("mounted");
+  }, 320);
+}
+
+sheetBackdrop.addEventListener("click", closeSheet);
+
 loadHistory();
 loadProfile();
 renderAll();
@@ -359,7 +396,7 @@ lessonsBtn.addEventListener("click", function () {
   currentLang = null;
   currentLessonIdx = null;
   renderLessonsView();
-  lessonsScreen.classList.add("open");
+  openSheet(lessonsScreen);
 });
 
 lessonsBackBtn.addEventListener("click", function () {
@@ -371,6 +408,109 @@ lessonsBackBtn.addEventListener("click", function () {
     currentLang = null;
     renderLessonsView();
   } else {
-    lessonsScreen.classList.remove("open");
+    closeSheet();
   }
 });
+
+// ---------------------------------------------------------------------
+// GitHub sheet — optional OAuth Device Flow login. This is the only
+// feature in the app that talks to the network (github.com only), and
+// only once the user explicitly taps the GitHub button. Opening the
+// verification link uses window.open, which on Android surfaces the
+// system "choose a browser" sheet, same as the connect flow in chat.
+// ---------------------------------------------------------------------
+var ghScreen = document.getElementById("ghScreen");
+var ghBtn = document.getElementById("ghBtn");
+var ghCloseBtn = document.getElementById("ghCloseBtn");
+var ghBody = document.getElementById("ghBody");
+var ghPollHandle = null;
+
+function setGhBtnState() {
+  var user = ghAuth.getUser();
+  ghBtn.classList.toggle("connected", !!user);
+  ghBtn.textContent = user ? "@" + user.login : "GitHub";
+}
+
+function renderGhLoggedIn() {
+  var user = ghAuth.getUser();
+  ghBody.innerHTML =
+    '<div class="gh-user">' +
+    (user.avatar_url ? '<img src="' + user.avatar_url + '" alt="" />' : "") +
+    '<div><div class="name">' + (user.name || user.login) + "</div>" +
+    '<div class="login">@' + user.login + "</div></div></div>" +
+    '<button class="gh-btn secondary" id="ghLogoutBtn">Выйти</button>';
+  document.getElementById("ghLogoutBtn").addEventListener("click", function () {
+    ghAuth.logout();
+    setGhBtnState();
+    renderGhScreen();
+  });
+}
+
+function renderGhLoggedOut() {
+  var savedClientId = ghAuth.getClientId();
+  ghBody.innerHTML =
+    '<p>Войдите через GitHub (OAuth Device Flow), чтобы связать аккаунт. Это единственная функция приложения, которая обращается к сети — только к github.com, и только по вашему запросу.</p>' +
+    '<input id="ghClientIdInput" placeholder="Client ID вашего GitHub OAuth App" value="' + (savedClientId || "").replace(/"/g, "&quot;") + '" />' +
+    '<button class="gh-btn" id="ghStartBtn">Войти через GitHub</button>' +
+    '<div id="ghDynamic"></div>';
+  document.getElementById("ghStartBtn").addEventListener("click", startGhLogin);
+}
+
+function renderGhScreen() {
+  if (ghPollHandle && ghPollHandle.cancel) ghPollHandle.cancel();
+  ghPollHandle = null;
+  if (ghAuth.isLoggedIn()) {
+    renderGhLoggedIn();
+  } else {
+    renderGhLoggedOut();
+  }
+}
+
+function startGhLogin() {
+  var clientId = (document.getElementById("ghClientIdInput").value || "").trim();
+  var dynamic = document.getElementById("ghDynamic");
+  if (!clientId) {
+    dynamic.innerHTML = '<div class="gh-error">Укажите Client ID GitHub OAuth App (создаётся бесплатно в настройках GitHub → Developer settings → OAuth Apps).</div>';
+    return;
+  }
+  ghAuth.setClientId(clientId);
+  document.getElementById("ghStartBtn").disabled = true;
+  dynamic.innerHTML = '<div class="gh-status">Запрашиваю код у GitHub...</div>';
+
+  ghPollHandle = ghAuth.loginWithDeviceFlow(clientId, function (state, data) {
+    if (state === "code") {
+      dynamic.innerHTML =
+        '<div class="gh-status">Откройте страницу подтверждения в браузере и введите код:</div>' +
+        '<div class="gh-code">' + data.user_code + "</div>" +
+        '<button class="gh-btn" id="ghOpenBrowserBtn">Открыть в браузере</button>' +
+        '<div class="gh-status" id="ghPollStatus">Ожидание подтверждения...</div>';
+      document.getElementById("ghOpenBrowserBtn").addEventListener("click", function () {
+        window.open(data.verification_uri, "_blank");
+      });
+    } else if (state === "polling") {
+      var statusEl = document.getElementById("ghPollStatus");
+      if (statusEl) statusEl.textContent = "Ожидание подтверждения в браузере...";
+    }
+  });
+
+  ghPollHandle
+    .then(function () {
+      setGhBtnState();
+      renderGhScreen();
+    })
+    .catch(function (err) {
+      var d = document.getElementById("ghDynamic");
+      if (d) d.innerHTML = '<div class="gh-error">' + (err && err.message ? err.message : "Ошибка авторизации") + "</div>";
+      var startBtn = document.getElementById("ghStartBtn");
+      if (startBtn) startBtn.disabled = false;
+    });
+}
+
+ghBtn.addEventListener("click", function () {
+  renderGhScreen();
+  openSheet(ghScreen);
+});
+
+ghCloseBtn.addEventListener("click", closeSheet);
+
+setGhBtnState();
