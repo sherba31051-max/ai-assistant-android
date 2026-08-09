@@ -7,8 +7,9 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "fetch:model": "node scripts/fetch-model.mjs",
     "build:assets": "node scripts/copy-wasm.mjs",
+    "pack:template": "node scripts/pack-android-template.mjs",
     "build:js": "esbuild src/app.js --bundle --format=iife --target=es2022 --outfile=www/app.bundle.js",
-    "build": "npm run build:assets && npm run build:js",
+    "build": "npm run build:assets && npm run pack:template && npm run build:js",
     "prepare:apk": "npm run fetch:model && npm run build"
   },
   "repository": {

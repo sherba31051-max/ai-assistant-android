@@ -11,7 +11,7 @@
 
 import { Wllama } from "@wllama/wllama";
 import * as ghAuth from "./github-auth.js";
-import { createRepoAndPush } from "./github-push.js";
+import { createRepoAndPush, getLatestWorkflowRun, getLatestRelease } from "./github-push.js";
 import { generateProject } from "./codegen-engine.js";
 import { createZip, bytesToBase64 } from "./zip-writer.js";
 
@@ -224,21 +224,109 @@ function appendCodegenBubble(result, historyIdx) {
   repoLinks.className = "codegen-repo-links";
   div.appendChild(repoLinks);
 
+  // Текстовое описание статуса GitHub Actions run для человека.
+  function buildStatusLabel(build) {
+    if (!build) return "Собираю APK — ожидаю первый запуск GitHub Actions...";
+    if (build.status !== "completed") {
+      var running = { queued: "в очереди", in_progress: "выполняется" }[build.status] || build.status;
+      return "Собираю APK — сборка " + running + "...";
+    }
+    if (build.conclusion === "success") return "APK собран успешно.";
+    if (build.conclusion === "failure") return "Сборка APK завершилась с ошибкой.";
+    return "Сборка APK завершена (" + build.conclusion + ").";
+  }
+
+  function persistResult() {
+    if (typeof historyIdx === "number" && history[historyIdx]) {
+      history[historyIdx].content = CODEGEN_MARKER + JSON.stringify(result);
+      saveHistory();
+    }
+  }
+
   function renderRepoState() {
-    if (result.repo) {
-      repoBtn.disabled = true;
-      repoBtn.textContent = "Репозиторий создан";
-      repoStatus.textContent = "";
-      repoLinks.innerHTML =
-        '<a class="codegen-link" target="_blank" rel="noopener" href="' + result.repo.repoUrl + '">Открыть репозиторий на GitHub</a>' +
-        '<a class="codegen-link primary" target="_blank" rel="noopener" href="' + result.repo.zipUrl + '">Скачать готовый файл (.zip)</a>';
-    } else {
+    if (!result.repo) {
       repoBtn.disabled = false;
       repoBtn.textContent = "Создать репозиторий на GitHub";
       repoLinks.innerHTML = "";
+      return;
     }
+    repoBtn.disabled = true;
+    repoBtn.textContent = "Репозиторий создан";
+
+    var repo = result.repo;
+    var build = repo.buildState;
+    repoStatus.textContent = buildStatusLabel(build);
+
+    var links =
+      '<a class="codegen-link" target="_blank" rel="noopener" href="' + repo.repoUrl + '">Открыть репозиторий</a>' +
+      '<a class="codegen-link" target="_blank" rel="noopener" href="' + (build && build.runUrl ? build.runUrl : repo.actionsUrl) + '">Actions (статус сборки)</a>' +
+      '<a class="codegen-link" target="_blank" rel="noopener" href="' + repo.releasesUrl + '">Releases</a>';
+    if (build && build.conclusion === "success" && build.apkUrl) {
+      links += '<a class="codegen-link primary" target="_blank" rel="noopener" href="' + build.apkUrl + '">Скачать APK</a>';
+    }
+    repoLinks.innerHTML = links;
   }
   renderRepoState();
+
+  // Опрашивает GitHub Actions/Releases нового репозитория, пока сборка не
+  // завершится (успехом или ошибкой), и показывает живой статус + прямую
+  // ссылку на .apk из релиза, как только он появится.
+  function pollBuildStatus(repo) {
+    var token = ghAuth.getToken();
+    if (!token) return;
+    var attempts = 0;
+    var MAX_ATTEMPTS = 60; // ~15 минут при интервале 15с
+    var INTERVAL_MS = 15000;
+
+    function tick() {
+      attempts++;
+      getLatestWorkflowRun(token, repo.owner, repo.name)
+        .then(function (run) {
+          if (!run) {
+            if (attempts < MAX_ATTEMPTS) setTimeout(tick, INTERVAL_MS);
+            return;
+          }
+          repo.buildState = {
+            status: run.status,
+            conclusion: run.conclusion,
+            runUrl: run.html_url,
+          };
+          renderRepoState();
+          persistResult();
+
+          if (run.status !== "completed") {
+            if (attempts < MAX_ATTEMPTS) setTimeout(tick, INTERVAL_MS);
+            return;
+          }
+          if (run.conclusion !== "success") return; // ошибка — ссылка на run уже показана
+
+          return getLatestRelease(token, repo.owner, repo.name).then(function (release) {
+            var asset = release && (release.assets || []).find(function (a) {
+              return /\.apk$/i.test(a.name);
+            });
+            if (asset) {
+              repo.buildState.apkUrl = asset.browser_download_url;
+              renderRepoState();
+              persistResult();
+            } else if (attempts < MAX_ATTEMPTS) {
+              // Release иногда появляется на несколько секунд позже, чем run
+              // помечается completed — подождём ещё немного.
+              setTimeout(tick, INTERVAL_MS);
+            }
+          });
+        })
+        .catch(function () {
+          if (attempts < MAX_ATTEMPTS) setTimeout(tick, INTERVAL_MS);
+        });
+    }
+    tick();
+  }
+
+  // Если репозиторий уже создан (например, при повторном открытии
+  // истории чата) и сборка ещё не завершилась успехом — продолжаем следить.
+  if (result.repo && !(result.repo.buildState && result.repo.buildState.conclusion === "success")) {
+    pollBuildStatus(result.repo);
+  }
 
   repoBtn.addEventListener("click", function () {
     if (!ghAuth.isLoggedIn()) {
@@ -252,12 +340,9 @@ function appendCodegenBubble(result, historyIdx) {
     })
       .then(function (repo) {
         result.repo = repo;
-        if (typeof historyIdx === "number" && history[historyIdx]) {
-          history[historyIdx].content = CODEGEN_MARKER + JSON.stringify(result);
-          saveHistory();
-        }
-        repoStatus.textContent = "Готово!";
+        persistResult();
         renderRepoState();
+        pollBuildStatus(repo);
       })
       .catch(function (err) {
         repoBtn.disabled = false;

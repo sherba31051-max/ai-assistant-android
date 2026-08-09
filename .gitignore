@@ -13,3 +13,4 @@ android/captures/
 www/app.bundle.js
 www/vendor/
 www/models/
+src/android-template-files.generated.js
